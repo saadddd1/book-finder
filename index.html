@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>找书聚合 · 搜一次，拿直链</title>
+<style>
+:root{--bg:#f5f6f8;--card:#fff;--text:#1a1d21;--muted:#6b7280;--border:#e5e7eb;--pri:#4f46e5;--pri-soft:rgba(79,70,229,.12)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,'Segoe UI','Microsoft YaHei',sans-serif;line-height:1.6}
+.wrap{max-width:960px;margin:0 auto;padding:16px 20px 40px}
+header{display:flex;align-items:center;gap:10px;padding:6px 0 2px;flex-wrap:wrap}
+h1{font-size:20px;flex:1}
+h1 small{font-size:12px;color:var(--muted);font-weight:400;margin-left:6px}
+.api-box{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.api-box input{width:250px;font-size:12px;padding:6px 10px;border:1px solid var(--border);border-radius:8px;outline:none;background:#fff}
+.api-box input:focus{border-color:var(--pri)}
+.api-box input.need{border-color:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.18)}
+.api-box button{font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:8px;background:#fff;cursor:pointer}
+.api-ok{color:#16a34a}
+.banner{display:none;font-size:13px;background:#fffbeb;border:1px solid #fde68a;color:#92400e;border-radius:10px;padding:8px 14px;margin:10px 0}
+.banner.show{display:block}
+.searchrow{display:flex;gap:10px;margin:12px 0 6px}
+#q{flex:1;font-size:16px;padding:11px 16px;border:1px solid var(--border);border-radius:12px;outline:none;background:#fff}
+#q:focus{border-color:var(--pri);box-shadow:0 0 0 3px var(--pri-soft)}
+#go{padding:11px 26px;font-size:15px;border:none;border-radius:12px;background:var(--pri);color:#fff;cursor:pointer;white-space:nowrap}
+#go:disabled{opacity:.55}
+#viewToggle{padding:11px 14px;font-size:13px;border:1px solid var(--border);border-radius:12px;background:#fff;cursor:pointer;white-space:nowrap}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+.chips .lbl{font-size:12px;color:var(--muted);align-self:center}
+.chip{font-size:12px;padding:3px 12px;border-radius:99px;border:1px solid var(--border);background:#fff;color:var(--text);cursor:pointer}
+.chip.on{background:var(--pri);border-color:var(--pri);color:#fff}
+.chip.recent{background:var(--pri-soft);border-color:transparent;color:var(--pri)}
+.srcstatus{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 2px}
+.st{font-size:11px;padding:2px 10px;border-radius:99px;background:#f3f4f6;color:var(--muted)}
+.st.ok{background:#dcfce7;color:#166534}
+.st.fail{background:#fee2e2;color:#991b1b}
+.st.tip{background:#fef3c7;color:#92400e}
+.hint{font-size:12px;color:var(--muted);margin:6px 0 14px}
+.hint b{color:#92400e}
+.item{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 16px;margin-bottom:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;transition:box-shadow .15s}
+.item:hover{box-shadow:0 2px 10px rgba(0,0,0,.06)}
+.item .t{flex:1;min-width:220px}
+.item .t b{font-size:14px}
+.item .t .sub{font-size:12px;color:var(--muted);margin-left:8px}
+.tags{display:flex;gap:4px;flex-wrap:wrap;margin-top:2px}
+.tag{font-size:10px;padding:0 7px;border-radius:99px;background:#eef2ff;color:#4338ca}
+a.btn{font-size:12px;padding:5px 13px;border-radius:8px;border:1px solid var(--border);background:#fff;color:var(--text);text-decoration:none;white-space:nowrap}
+a.btn.pri{background:var(--pri);border-color:var(--pri);color:#fff}
+a.btn:hover{opacity:.85}
+.src{margin-bottom:24px}
+.src-head{display:flex;align-items:baseline;gap:8px;margin-bottom:6px;flex-wrap:wrap}
+.src-head h2{font-size:15px}
+.src-desc{font-size:12px;color:var(--muted);margin-bottom:8px}
+.err{font-size:12px;color:#991b1b}
+.empty{font-size:13px;color:var(--muted);padding:30px 0;text-align:center}
+footer{font-size:12px;color:var(--muted);padding:24px 0 0;border-top:1px solid var(--border);margin-top:20px}
+code{background:#eef;font-size:11px;padding:1px 5px;border-radius:4px}
+.spin{display:inline-block;width:12px;height:12px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:sp 1s linear infinite;vertical-align:-2px;margin-right:6px}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media(max-width:640px){.api-box input{width:150px}.searchrow{flex-wrap:wrap}#go{flex:1}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>找书聚合<small>搜一次 · 六源并发 · 直链下载</small></h1>
+  <div class="api-box">
+    API <input id="api" placeholder="https://你的worker.workers.dev">
+    <button id="saveApi">保存</button><span id="apiState"></span>
+  </div>
+</header>
+<div class="banner" id="banner">首次使用：注册 Cloudflare 并部署 Worker 后，把 <b>workers.dev 地址</b>粘贴到右上角 API 框并保存。也可以填 <code>http://localhost:7788</code> 使用本地版（node aggregate.js）。</div>
+<div class="searchrow">
+  <input id="q" placeholder="输入书名 / 作者，回车或点搜索" autofocus>
+  <button id="go">搜索</button>
+  <button id="viewToggle" title="切换结果视图">按源分组</button>
+</div>
+<div class="chips" id="recent"></div>
+<div class="chips" id="langFilters" style="display:none"><span class="lbl">语言</span></div>
+<div class="chips" id="fmtFilters" style="display:none"><span class="lbl">格式</span></div>
+<div class="srcstatus" id="status"></div>
+<div class="hint" id="hint" style="display:none">结果已跨源合并去重 · <b>EPUB / PDF / Kindle / TXT</b> 按钮为直接下载 · 「书页」进入站内下载页</div>
+<div id="out"><div class="empty">输入书名开始搜索。中文书、英文公版书、教材一次性并发查询 6 个源。</div></div>
+<footer>已接入：安娜的档案 · 苦瓜书盘 · Sobooks · Gutenberg · Standard Ebooks · Open Library。资源仅供个人学习消遣，读完觉得好请支持正版。</footer>
+</div>
+<script>
+(function(){
+'use strict';
+var $=function(id){return document.getElementById(id)};
+var esc=function(s){return (s==null?'':String(s)).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})};
+var LS_API='bf_api',LS_RECENT='bf_recent',SS_PRE='bf_cache_';
+var DEFAULT_API='https://book-finder-api.3280244146.workers.dev'; // 换 Worker 地址时改这里或页面右上角
+
+var apiBase=localStorage.getItem(LS_API)||DEFAULT_API;
+var mergedView=true, lastData=null, curQ='';
+var langFilter='all', fmtFilter='all';
+
+// ---- API 地址初始化: ?api= 参数 > localStorage ----
+try{
+  var qp=new URLSearchParams(location.search).get('api');
+  if(qp){apiBase=qp;localStorage.setItem(LS_API,qp);}
+}catch(e){}
+$('api').value=apiBase;
+refreshApiState();
+$('saveApi').onclick=function(){
+  apiBase=$('api').value.trim().replace(/\/+$/,'');
+  localStorage.setItem(LS_API,apiBase);refreshApiState();
+  if(apiBase&&curQ)run(curQ);
+};
+function refreshApiState(){
+  var need=!apiBase;
+  $('api').classList.toggle('need',need);
+  $('banner').classList.toggle('show',need);
+  $('apiState').textContent=need?'':'✓ 已配置';
+  $('apiState').className=need?'':'api-ok';
+}
+
+// ---- 近期搜索 ----
+function recents(){try{return JSON.parse(localStorage.getItem(LS_RECENT)||'[]')}catch(e){return[]}}
+function pushRecent(q){
+  var r=recents().filter(function(x){return x!==q});
+  r.unshift(q);r=r.slice(0,8);
+  localStorage.setItem(LS_RECENT,JSON.stringify(r));renderRecent();
+}
+function renderRecent(){
+  var r=recents(),el=$('recent');
+  el.innerHTML=r.length?'<span class="lbl">最近</span>':'';
+  r.forEach(function(q){
+    var c=document.createElement('span');c.className='chip recent';c.textContent=q;
+    c.onclick=function(){$('q').value=q;run(q)};
+    el.appendChild(c);
+  });
+}
+renderRecent();
+
+// ---- 搜索 ----
+async function run(q){
+  q=(q||'').trim();if(!q)return;
+  if(!apiBase){$('api').focus();return}
+  curQ=q;pushRecent(q);
+  var go=$('go');
+  go.disabled=true;go.innerHTML='<span class="spin"></span>搜索中';
+  $('out').innerHTML='<div class="empty">正在并发查询 6 个源，约需 3~15 秒…</div>';
+  // 会话内缓存: 同词秒开, 后台仍刷新
+  var cached=sessionStorage.getItem(SS_PRE+q);
+  if(cached){try{lastData=JSON.parse(cached);renderAll();}catch(e){}}
+  try{
+    var res=await fetch(apiBase+'/api/search?q='+encodeURIComponent(q));
+    if(!res.ok)throw new Error('HTTP '+res.status);
+    var data=await res.json();
+    lastData=data;sessionStorage.setItem(SS_PRE+q,JSON.stringify(data));
+    renderAll();
+  }catch(e){
+    $('out').innerHTML='<div class="empty err">请求失败：'+esc(e.message)+'<br>请检查右上角 API 地址是否为你的 Worker 地址（浏览器直接打开它应能看到搜索框）。</div>';
+    if(!cached)$('status').innerHTML='';
+  }
+  go.disabled=false;go.textContent='搜索';
+}
+$('go').onclick=function(){run($('q').value)};
+$('q').addEventListener('keydown',function(e){if(e.key==='Enter')run($('q').value)});
+var hq=decodeURIComponent((location.hash||'#').slice(1));
+if(hq){$('q').value=hq;run(hq)}
+
+$('viewToggle').onclick=function(){
+  mergedView=!mergedView;
+  this.textContent=mergedView?'按源分组':'合并视图';
+  renderAll();
+};
+
+// ---- 条目预处理 ----
+function fmtTags(it){
+  var s={};
+  (it.downloads||[]).forEach(function(d){
+    var l=(d.label||'').toLowerCase();
+    if(l.indexOf('epub')>-1)s.epub=1;
+    else if(l.indexOf('kindle')>-1||l.indexOf('azw')>-1)s.kindle=1;
+    else if(l.indexOf('pdf')>-1)s.pdf=1;
+    else if(l.indexOf('txt')>-1)s.txt=1;
+  });
+  if(!Object.keys(s).length&&it.pageUrl)s.page=1;
+  return Object.keys(s);
+}
+function norm(t){return (t||'').toLowerCase().replace(/[《》【】\[\]()（）·:：,，.。!！?？\-—_'’"“”\s]/g,'')}
+function prep(){
+  var flat=[];
+  (lastData.results||[]).forEach(function(src){
+    (src.items||[]).forEach(function(it){
+      flat.push({title:it.title,author:it.author||'',extra:it.extra||'',downloads:it.downloads||[],pageUrl:it.pageUrl||'',src:src.name,lang:src.lang||''});
+    });
+  });
+  if(!mergedView)return flat;
+  var map={},order=[];
+  flat.forEach(function(it){
+    var k=norm(it.title);if(!k)k='_'+it.src+Math.random();
+    if(!map[k]){map[k]={title:it.title,author:it.author,extra:it.extra,srcs:[],langs:{},downloads:[],pageUrls:[]};order.push(k)}
+    var g=map[k];
+    if(it.title.length>g.title.length&&it.author)g.title=it.title;
+    if(!g.author&&it.author)g.author=it.author;
+    if(!g.extra&&it.extra)g.extra=it.extra;
+    if(g.srcs.indexOf(it.src)<0)g.srcs.push(it.src);
+    if(it.lang)g.langs[it.lang]=1;
+    (it.downloads||[]).forEach(function(d){
+      if(!g.downloads.some(function(x){return x.url===d.url}))g.downloads.push(d);
+    });
+    if(it.pageUrl&&g.pageUrls.indexOf(it.pageUrl)<0)g.pageUrls.push(it.pageUrl);
+  });
+  return order.map(function(k){
+    var g=map[k];
+    return {title:g.title,author:g.author,extra:g.extra,downloads:g.downloads,pageUrls:g.pageUrls,srcs:g.srcs,langs:Object.keys(g.langs),_fmts:null};
+  });
+}
+function tagsOf(it){
+  if(it._fmts)return it._fmts;
+  var s={};
+  (it.downloads||[]).forEach(function(d){
+    var l=(d.label||'').toLowerCase();
+    if(l.indexOf('epub')>-1)s.epub=1;else if(l.indexOf('kindle')>-1||l.indexOf('azw')>-1)s.kindle=1;
+    else if(l.indexOf('pdf')>-1)s.pdf=1;else if(l.indexOf('txt')>-1)s.txt=1;
+  });
+  if(!Object.keys(s).length&&((it.pageUrl)||(it.pageUrls&&it.pageUrls.length)))s.page=1;
+  it._fmts=Object.keys(s);return it._fmts;
+}
+
+// ---- 渲染 ----
+function cardHTML(it,buttonsHTML,srcTags){
+  var sub=[it.author,it.extra].filter(Boolean).join(' · ');
+  var tags=(srcTags||[]).map(function(s){return '<span class="tag">'+esc(s)+'</span>'}).join('');
+  return '<div class="item"><div class="t"><b>'+esc(it.title)+'</b>'+(sub?'<span class="sub">'+esc(sub)+'</span>':'')+(tags?'<div class="tags">'+tags+'</div>':'')+'</div>'+buttonsHTML+'</div>';
+}
+function dlBtns(it){
+  var b='';
+  (it.downloads||[]).forEach(function(d,i){b+='<a class="btn'+(i===0?' pri':'')+'" href="'+esc(d.url)+'" target="_blank" rel="noopener">'+esc(d.label)+' ↓</a>'});
+  var pages=it.pageUrls||((it.pageUrl)?[it.pageUrl]:[]);
+  pages.forEach(function(p){b+='<a class="btn" href="'+esc(p)+'" target="_blank" rel="noopener">书页 ↗</a>'});
+  return b;
+}
+function renderAll(){
+  if(!lastData)return;
+  renderStatus();
+  renderFilters();
+  var out=$('out');
+  if(mergedView){
+    $('hint').style.display='block';
+    var items=prep().filter(passFilter);
+    if(!items.length){out.innerHTML='<div class="empty">没有符合筛选条件的结果</div>';return}
+    items.sort(function(a,b){
+      var da=(a.downloads||[]).length>0?1:0,db=(b.downloads||[]).length>0?1:0;
+      if(da!==db)return db-da;
+      if((b.srcs||[]).length!==(a.srcs||[]).length)return (b.srcs||[]).length-(a.srcs||[]).length;
+      return 0;
+    });
+    out.innerHTML='';
+    items.forEach(function(it){out.insertAdjacentHTML('beforeend',cardHTML(it,dlBtns(it),it.srcs))});
+  }else{
+    $('hint').style.display='none';
+    out.innerHTML='';
+    (lastData.results||[]).forEach(function(src){
+      var d=document.createElement('div');d.className='src';
+      var head='<div class="src-head"><h2>'+esc(src.name)+'</h2>'+
+        (src.ok?'<span class="st ok">'+src.items.length+' 条 · '+(src.ms/1000).toFixed(1)+'s</span>':'<span class="st fail">失败 · '+esc((src.error||'').slice(0,40))+'</span>')+
+        '</div><div class="src-desc">'+esc(src.desc)+'</div>';
+      d.innerHTML=head;
+      var shown=(src.items||[]).filter(passFilter);
+      if(src.ok&&!shown.length)d.insertAdjacentHTML('beforeend','<div class="empty">无结果或被筛选过滤</div>');
+      shown.forEach(function(it){
+        it.pageUrls=it.pageUrl?[it.pageUrl]:[];
+        d.insertAdjacentHTML('beforeend',cardHTML(it,dlBtns(it),null));
+      });
+      out.appendChild(d);
+    });
+  }
+}
+function passFilter(it){
+  if(langFilter!=='all'){
+    var langs=it.langs||[it.lang||''];
+    if(langs.indexOf(langFilter)<0)return false;
+  }
+  if(fmtFilter!=='all'){
+    var t=tagsOf(it);
+    if(fmtFilter==='direct'){if(!(it.downloads&&it.downloads.length))return false}
+    else if(t.indexOf(fmtFilter)<0)return false;
+  }
+  return true;
+}
+function renderStatus(){
+  var el=$('status');el.innerHTML='';
+  (lastData.results||[]).forEach(function(s){
+    var cls='st',txt=s.name+' · ';
+    if(!s.ok){cls+=' fail';txt+='失败'}
+    else if(!s.items.length){txt+='0 条'}
+    else if(s.items.length===1&&s.items[0].title.indexOf('在浏览器中搜索')===0){cls+=' tip';txt+='需浏览器验证'}
+    else{cls+=' ok';txt+=s.items.length+' 条'}
+    var c=document.createElement('span');c.className=cls;c.textContent=txt;c.title=s.desc+(s.error?' · '+s.error:'');
+    el.appendChild(c);
+  });
+}
+function chip(group,val,label){
+  var c=document.createElement('span');
+  c.className='chip'+((group==='lang'?langFilter:fmtFilter)===val?' on':'');
+  c.textContent=label;
+  c.onclick=function(){
+    if(group==='lang')langFilter=val;else fmtFilter=val;
+    renderFilters();renderAll();
+  };
+  return c;
+}
+function renderFilters(){
+  var le=$('langFilters'),fe=$('fmtFilters');
+  if(!lastData){le.style.display=fe.style.display='none';return}
+  le.style.display=fe.style.display='flex';
+  [['all','全部'],['zh','中文'],['en','英文']].forEach(function(p){
+    le.appendChild(chip('lang',p[0],p[1]));
+  });
+  [['all','全部'],['direct','有直链'],['epub','EPUB'],['pdf','PDF'],['kindle','Kindle'],['txt','TXT'],['page','书页']].forEach(function(p){
+    fe.appendChild(chip('fmt',p[0],p[1]));
+  });
+}
+})();
+</script>
+</body>
+</html>

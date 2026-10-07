@@ -1,0 +1,5 @@
+# 找书聚合 API — Cloudflare Worker 配置
+# 部署: npx wrangler deploy
+name = "book-finder-api"
+main = "worker.js"
+compatibility_date = "2026-09-01"
