@@ -1,0 +1,38 @@
+# 书源健康巡检: 从 GitHub Actions (墙外) 对生产 Worker 做冒烟测试
+# 触发: worker.js 变更的 push / 手动 / 每日定时(北京时间 06:00)
+name: book-source-health-check
+on:
+  push:
+    branches: [main]
+    paths: ['worker.js', '.github/workflows/health-check.yml']
+  schedule:
+    - cron: '0 22 * * *'
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Production worker search smoke test
+        run: |
+          set -e
+          FAIL=0
+          for Q in "pride and prejudice" "三体" "论语"; do
+            echo "===== query: $Q ====="
+            curl -sS --max-time 120 -G "https://book-finder-api.3280244146.workers.dev/api/search" \
+              --data-urlencode "q=$Q" -o resp.json || { echo "worker unreachable"; FAIL=1; continue; }
+            node -e '
+              const d = require("./resp.json");
+              if (!d.results) { console.log("BAD RESPONSE:", JSON.stringify(d).slice(0, 300)); process.exit(1); }
+              let withHits = 0;
+              for (const s of d.results) {
+                const n = (s.items || []).length;
+                if (s.ok && n > 0) withHits++;
+                console.log((s.ok ? "PASS" : "FAIL"), s.name, n + "条", s.error || "");
+              }
+              console.log("sources with hits:", withHits + "/" + d.results.length);
+              if (withHits < 2) { console.log("TOO FEW SOURCES RETURNED RESULTS"); process.exit(1); }
+            ' || FAIL=1
+          done
+          exit $FAIL
