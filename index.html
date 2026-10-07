@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>找书聚合 · 搜一次，拿直链</title>
 <meta name="theme-color" content="#4f46e5">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="找书">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -32,7 +35,7 @@ h1 small{font-size:12px;color:var(--muted);font-weight:400;margin-left:6px}
 #viewToggle{padding:11px 14px;font-size:13px;border:1px solid var(--border);border-radius:12px;background:#fff;cursor:pointer;white-space:nowrap}
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
 .chips .lbl{font-size:12px;color:var(--muted);align-self:center}
-.chip{font-size:12px;padding:3px 12px;border-radius:99px;border:1px solid var(--border);background:#fff;color:var(--text);cursor:pointer}
+.chip{font-size:12px;padding:6px 14px;border-radius:99px;border:1px solid var(--border);background:#fff;color:var(--text);cursor:pointer;min-height:30px;display:inline-flex;align-items:center}
 .chip.on{background:var(--pri);border-color:var(--pri);color:#fff}
 .chip.recent{background:var(--pri-soft);border-color:transparent;color:var(--pri)}
 .srcstatus{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 2px}
@@ -49,7 +52,7 @@ h1 small{font-size:12px;color:var(--muted);font-weight:400;margin-left:6px}
 .item .t .sub{font-size:12px;color:var(--muted);margin-left:8px}
 .tags{display:flex;gap:4px;flex-wrap:wrap;margin-top:2px}
 .tag{font-size:10px;padding:0 7px;border-radius:99px;background:#eef2ff;color:#4338ca}
-a.btn{font-size:12px;padding:5px 13px;border-radius:8px;border:1px solid var(--border);background:#fff;color:var(--text);text-decoration:none;white-space:nowrap}
+a.btn{font-size:12px;padding:7px 14px;border-radius:8px;border:1px solid var(--border);background:#fff;color:var(--text);text-decoration:none;white-space:nowrap;min-height:30px;display:inline-flex;align-items:center;justify-content:center}
 a.btn.pri{background:var(--pri);border-color:var(--pri);color:#fff}
 a.btn:hover{opacity:.85}
 .src{margin-bottom:24px}
@@ -242,10 +245,14 @@ function cardHTML(it,buttonsHTML,srcTags){
   var tags=(srcTags||[]).map(function(s){return '<span class="tag">'+esc(s)+'</span>'}).join('');
   return '<div class="item"><div class="t"><b>'+esc(it.title)+'</b>'+(sub?'<span class="sub">'+esc(sub)+'</span>':'')+(tags?'<div class="tags">'+tags+'</div>':'')+'</div>'+buttonsHTML+'</div>';
 }
+function safeUrl(u){return /^https?:\/\//i.test(u||'')?u:null}
 function dlBtns(it){
   var b='';
-  (it.downloads||[]).forEach(function(d,i){b+='<a class="btn'+(i===0?' pri':'')+'" href="'+esc(d.url)+'" target="_blank" rel="noopener">'+esc(d.label)+' ↓</a>'});
-  var pages=it.pageUrls||((it.pageUrl)?[it.pageUrl]:[]);
+  (it.downloads||[]).forEach(function(d,i){
+    var u=safeUrl(d.url);if(!u)return;
+    b+='<a class="btn'+(i===0?' pri':'')+'" href="'+esc(u)+'" target="_blank" rel="noopener">'+esc(d.label)+' ↓</a>';
+  });
+  var pages=(it.pageUrls||((it.pageUrl)?[it.pageUrl]:[])).map(safeUrl).filter(Boolean);
   pages.forEach(function(p){b+='<a class="btn" href="'+esc(p)+'" target="_blank" rel="noopener">书页 ↗</a>'});
   return b;
 }
