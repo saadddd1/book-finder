@@ -35,4 +35,14 @@ jobs:
               if (withHits < 2) { console.log("TOO FEW SOURCES RETURNED RESULTS"); process.exit(1); }
             ' || FAIL=1
           done
+          echo "===== novel search smoke: 斗破苍穹 ====="
+          curl -sS --max-time 60 -G "https://book-finder-api.3280244146.workers.dev/api/novel/search" \
+            --data-urlencode "q=斗破苍穹" -o resp.json || { echo "worker unreachable"; FAIL=1; }
+          node -e '
+            const d = require("./resp.json");
+            const ok = (d.sources || []).filter(s => s.ok && s.items.length > 0);
+            (d.sources || []).forEach(s => console.log((s.ok ? "PASS" : "FAIL"), s.name, (s.items || []).length + "条", s.error || ""));
+            console.log("novel sources with hits:", ok.length + "/" + (d.sources || []).length);
+            if (ok.length < 1) { console.log("NO NOVEL SOURCE RETURNED RESULTS"); process.exit(1); }
+          ' || FAIL=1
           exit $FAIL
