@@ -166,6 +166,7 @@ async function annas(q) {
 // 6. Open Library: 英文书目, 公版书给 archive.org 直链 (Worker 出网不再被墙)
 async function openlibrary(q) {
   const r = await http('https://openlibrary.org/search.json?limit=8&fields=key,title,author_name,ia,ebook_access,first_publish_year&q=' + encodeURIComponent(q), { timeoutMs: 20000 });
+  if (r.status === 422) return { items: [] }; // Open Library 解析不了 CJK 查询, 优雅返回空
   if (r.status !== 200) throw new Error('HTTP ' + r.status);
   const data = JSON.parse(r.body);
   const items = (data.docs || []).map(d => {
