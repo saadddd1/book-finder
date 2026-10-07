@@ -259,7 +259,64 @@ async function handleSearch(q) {
       return { name: a.name, desc: a.desc, lang: a.lang, ok: false, ms: Date.now() - t0, items: [], error: (e && e.message) || '失败' };
     }
   }));
-  return { q, results };
+  return { q, results, merged: buildMerged(q, results) };
+}
+
+// ---------- 排序与去重: 相关度评分 + 书名/作者双键跨源合并 ----------
+const normT = s => (s || '').toLowerCase().replace(/[《》【】\[\]()（）·:：,，.。!！?？\-—_'’"“”\s]/g, '');
+
+function relevance(title, q) {
+  const t = normT(title), nq = normT(q);
+  if (!nq) return 0;
+  if (t === nq) return 4;
+  if (t.includes(nq)) return 3;
+  let hit = 0;
+  if (/[\u4e00-\u9fff]/.test(nq)) {
+    const grams = [...nq].map((c, i, a) => i < a.length - 1 ? c + a[i + 1] : null).filter(Boolean);
+    for (const g of grams) if (t.includes(g)) hit++;
+    return grams.length ? Math.min(2, hit / grams.length * 2) : 0;
+  }
+  const toks = nq.split(/\s+/).filter(w => w.length > 1);
+  for (const w of toks) if (t.includes(w)) hit++;
+  return toks.length ? Math.min(2, hit / toks.length * 2) : 0;
+}
+
+function buildMerged(q, results) {
+  const groups = new Map();
+  for (const src of results) {
+    for (const it of (src.items || [])) {
+      const tKey = normT(it.title);
+      if (!tKey) continue;
+      const aKey = normT(it.author);
+      let g = null;
+      for (const gr of groups.values()) {
+        if (gr.tKey !== tKey) continue;
+        const ga = gr.aKey;
+        if (!ga || !aKey || ga === aKey || ga.includes(aKey) || aKey.includes(ga)) { g = gr; break; }
+      }
+      if (!g) {
+        g = { tKey, aKey, title: it.title, author: it.author || '', extra: it.extra || '', srcs: [], langs: {}, downloads: [], pageUrls: [] };
+        groups.set(tKey + '|' + (aKey || Math.random().toString(36).slice(2)), g);
+      }
+      if (!g.author && it.author) { g.author = it.author; g.aKey = aKey; }
+      if (it.title.length > g.title.length && it.author) g.title = it.title;
+      if (!g.extra && it.extra) g.extra = it.extra;
+      if (g.srcs.indexOf(src.name) < 0) g.srcs.push(src.name);
+      if (src.lang) g.langs[src.lang] = 1;
+      for (const d of (it.downloads || [])) {
+        if (/^https?:\/\//i.test(d.url || '') && !g.downloads.some(x => x.url === d.url)) g.downloads.push(d);
+      }
+      if (it.pageUrl && /^https?:\/\//i.test(it.pageUrl) && g.pageUrls.indexOf(it.pageUrl) < 0) g.pageUrls.push(it.pageUrl);
+    }
+  }
+  const arr = [...groups.values()].map(g => ({
+    title: g.title, author: g.author, extra: g.extra,
+    downloads: g.downloads, pageUrls: g.pageUrls,
+    srcs: g.srcs, langs: Object.keys(g.langs),
+    score: Math.round((g.downloads.length * 3 + g.srcs.length * 1.5 + relevance(g.title, q)) * 10) / 10,
+  }));
+  arr.sort((a, b) => b.score - a.score || b.srcs.length - a.srcs.length || b.downloads.length - a.downloads.length);
+  return arr.slice(0, 30);
 }
 
 // ---------- Worker 内置极简 UI (不配前端也能直接用) ----------
@@ -301,21 +358,16 @@ async function run(){
   try{
     var d=await fetch('/api/search?q='+encodeURIComponent(q)).then(function(x){return x.json()});
     out.innerHTML='';
-    d.results.forEach(function(s){
-      var el=document.createElement('div');el.className='src';
-      var h='<div class="src-head"><h2>'+esc(s.name)+'</h2>'+
-        (s.ok?'<span class="badge">'+s.items.length+' 条</span>':'<span class="badge fail">失败</span>')+
-        '</div><div class="src-desc">'+esc(s.desc)+'</div>';
-      el.innerHTML=h;
-      s.items.forEach(function(it){
-        var b='';(it.downloads||[]).forEach(function(dl,i){b+='<a class="btn'+(i===0?' pri':'')+'" href="'+dl.url+'" target="_blank" rel="noopener">'+esc(dl.label)+'</a>'});
-        if(it.pageUrl)b+='<a class="btn" href="'+it.pageUrl+'" target="_blank" rel="noopener">书页</a>';
-        var row=document.createElement('div');row.className='item';
-        row.innerHTML='<div class="t"><b>'+esc(it.title)+'</b><span>'+esc([it.author,it.extra].filter(Boolean).join(' · '))+'</span></div>'+b;
-        el.appendChild(row);
-      });
-      out.appendChild(el);
+    var items=d.merged||[];
+    items.forEach(function(it){
+      var b='';(it.downloads||[]).forEach(function(dl,i){b+='<a class="btn'+(i===0?' pri':'')+'" href="'+dl.url+'" target="_blank" rel="noopener">'+esc(dl.label)+'</a>'});
+      (it.pageUrls||[]).forEach(function(p){b+='<a class="btn" href="'+p+'" target="_blank" rel="noopener">书页</a>'});
+      var tags=(it.srcs||[]).map(function(s){return '<span class="tag">'+esc(s)+'</span>'}).join('');
+      var row=document.createElement('div');row.className='item';
+      row.innerHTML='<div class="t"><b>'+esc(it.title)+'</b><span>'+esc([it.author,it.extra].filter(Boolean).join(' · '))+'</span>'+(tags?'<div class="tags">'+tags+'</div>':'')+'</div>'+b;
+      out.appendChild(row);
     });
+    if(!items.length)out.innerHTML='<p>无结果，试试底部导航站</p>';
   }catch(e){out.innerHTML='<p>请求失败: '+esc(e.message)+'</p>'}
   go.disabled=false;go.textContent='搜索';
 }
@@ -330,8 +382,17 @@ export default {
     if (u.pathname === '/api/search') {
       const q = (u.searchParams.get('q') || '').trim();
       if (!q) return new Response(JSON.stringify({ error: '缺少 q' }), { status: 400, headers: { ...CORS, 'Content-Type': 'application/json; charset=utf-8' } });
+      // Cache API: 同词 15 分钟内直接命中, 省上游请求与 CPU
+      const normQ = q.replace(/\s+/g, ' ').toLowerCase();
+      const cacheKey = new Request('https://cache.local/api/search?q=' + encodeURIComponent(normQ), { method: 'GET' });
+      const cached = await caches.default.match(cacheKey);
+      if (cached) return cached;
       const data = await handleSearch(q);
-      return new Response(JSON.stringify(data), { headers: { ...CORS, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } });
+      const res = new Response(JSON.stringify(data), {
+        headers: { ...CORS, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'public, max-age=900' },
+      });
+      await caches.default.put(cacheKey, res.clone());
+      return res;
     }
     if (u.pathname === '/') return new Response(MINI_UI, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
     return new Response('Not Found', { status: 404, headers: CORS });

@@ -1,5 +1,6 @@
 // 找书聚合 Service Worker: 应用壳缓存(安装后秒开/离线壳), API 请求不缓存
-const V = 'bf-v1';
+// 注意: 修改 index.html 等壳文件后需 bump 版本号, 否则老用户可能拿到旧缓存
+const V = 'bf-v2';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {

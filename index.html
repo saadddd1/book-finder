@@ -92,7 +92,7 @@ code{background:#eef;font-size:11px;padding:1px 5px;border-radius:4px}
 <div class="chips" id="langFilters" style="display:none"><span class="lbl">语言</span></div>
 <div class="chips" id="fmtFilters" style="display:none"><span class="lbl">格式</span></div>
 <div class="srcstatus" id="status"></div>
-<div class="hint" id="hint" style="display:none">结果已跨源合并去重 · <b>EPUB / PDF / Kindle / TXT</b> 按钮为直接下载 · 「书页」进入站内下载页</div>
+<div class="hint" id="hint" style="display:none">结果已按相关度排序、跨源合并去重 · <b>EPUB / PDF / Kindle / TXT</b> 按钮为直接下载 · 「书页」进入站内下载页</div>
 <div id="out"><div class="empty">输入书名开始搜索。中文书、英文公版书、教材一次性并发查询 9 个源。</div></div>
 <details id="fallback" class="fb" style="display:none">
   <summary>没找到？一键去更多书源站搜同词 · 找书导航</summary>
@@ -263,16 +263,20 @@ function renderAll(){
   var out=$('out');
   if(mergedView){
     $('hint').style.display='block';
-    var items=prep().filter(passFilter);
-    if(!items.length){out.innerHTML='<div class="empty">没有符合筛选条件的结果</div>';return}
-    items.sort(function(a,b){
-      var da=(a.downloads||[]).length>0?1:0,db=(b.downloads||[]).length>0?1:0;
-      if(da!==db)return db-da;
-      if((b.srcs||[]).length!==(a.srcs||[]).length)return (b.srcs||[]).length-(a.srcs||[]).length;
-      return 0;
-    });
+    var items;
+    if(lastData.merged){items=lastData.merged.filter(passFilter)}
+    else{
+      items=prep().filter(passFilter);
+      items.sort(function(a,b){
+        var da=(a.downloads||[]).length>0?1:0,db=(b.downloads||[]).length>0?1:0;
+        if(da!==db)return db-da;
+        if((b.srcs||[]).length!==(a.srcs||[]).length)return (b.srcs||[]).length-(a.srcs||[]).length;
+        return 0;
+      });
+    }
     out.innerHTML='';
     items.forEach(function(it){out.insertAdjacentHTML('beforeend',cardHTML(it,dlBtns(it),it.srcs))});
+    if(!items.length)out.innerHTML='<div class="empty">没有符合筛选条件的结果</div>';
   }else{
     $('hint').style.display='none';
     out.innerHTML='';
