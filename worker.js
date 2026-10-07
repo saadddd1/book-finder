@@ -1,7 +1,10 @@
 // 找书聚合 API —— Cloudflare Worker 版
 // 从 CF 边缘出网, 无墙: Open Library 直接可用, 安娜的档案仍可能被人机验证拦(自动降级为浏览器入口)
 // 部署: npx wrangler deploy   本地调试: npx wrangler dev
-// API: GET /api/search?q=书名  →  { q, results: [{ name, desc, lang, ok, ms, items, error? }] }
+// API: GET /api/search?q=书名  →  { q, results: [...], merged: [...] }
+//      GET /api/novel/search?q= / /api/novel/toc?u=&s= / /api/novel/chapter?u=&s=
+
+import { NOVEL_SOURCES, parseToc, cleanChapter } from './novel-rules.js';
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
 
@@ -25,7 +28,19 @@ async function http(url, opts = {}) {
     const kv = c.split(';')[0]; const i = kv.indexOf('=');
     if (i > 0) jar[kv.slice(0, i).trim()] = kv.slice(i + 1).trim();
   }
-  return { status: res.status, url: res.url, body: await res.text() };
+  let text;
+  if (opts.decode === 'auto') {
+    // 老站点常见 GBK: 先按 utf-8 解, 依 meta charset 或乱码比例切换 gbk
+    const buf = await res.arrayBuffer();
+    let t = new TextDecoder('utf-8').decode(buf);
+    if (/charset=['"]?gb/i.test(t.slice(0, 2000)) || (t.match(/\uFFFD/g) || []).length > 20) {
+      try { t = new TextDecoder('gbk').decode(buf); } catch { /* 保底 utf-8 */ }
+    }
+    text = t;
+  } else {
+    text = await res.text();
+  }
+  return { status: res.status, url: res.url, body: text };
 }
 
 const strip = s => s.replace(/<[^>]+>/g, '').replace(/&[a-z#0-9]+;/gi, ' ').replace(/\s+/g, ' ').trim();
@@ -319,6 +334,44 @@ function buildMerged(q, results) {
   return arr.slice(0, 30);
 }
 
+// ---------- 网文: 搜索/目录/单章代理 (打包在浏览器端完成) ----------
+function findSource(id) { return NOVEL_SOURCES.find(s => s.id === id); }
+
+function safeSourceUrl(src, u) {
+  try {
+    const t = new URL(u), b = new URL(src.base);
+    return t.origin === b.origin ? t.href : null; // 白名单: 仅书源自己的域名, 防 SSRF
+  } catch { return null; }
+}
+
+async function cachedJson(key, ttl, fn) {
+  const ck = new Request('https://cache.local/' + key);
+  const hit = await caches.default.match(ck);
+  if (hit) return hit;
+  const data = await fn();
+  const res = new Response(JSON.stringify(data), { headers: { ...CORS, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'public, max-age=' + ttl } });
+  await caches.default.put(ck, res.clone());
+  return res;
+}
+
+async function novelSearch(q) {
+  const sources = await Promise.all(NOVEL_SOURCES.map(async s => {
+    try {
+      const r = await http(s.search.url, {
+        method: s.search.method || 'GET',
+        body: s.search.body ? s.search.body(q) : undefined,
+        decode: 'auto', timeoutMs: 15000,
+      });
+      if (r.status !== 200) throw new Error('HTTP ' + r.status);
+      const items = s.search.parse(r.body, s.base);
+      return { id: s.id, name: s.name, ok: true, items };
+    } catch (e) {
+      return { id: s.id, name: s.name, ok: false, error: (e && e.message) || '失败', items: [] };
+    }
+  }));
+  return { q, sources };
+}
+
 // ---------- Worker 内置极简 UI (不配前端也能直接用) ----------
 const MINI_UI = `<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -393,6 +446,37 @@ export default {
       });
       await caches.default.put(cacheKey, res.clone());
       return res;
+    }
+    if (u.pathname === '/api/novel/search') {
+      const q = (u.searchParams.get('q') || '').trim();
+      if (!q) return new Response(JSON.stringify({ error: '缺少 q' }), { status: 400, headers: { ...CORS, 'Content-Type': 'application/json; charset=utf-8' } });
+      const normQ = q.replace(/\s+/g, ' ').toLowerCase();
+      return cachedJson('api/novel/search?q=' + encodeURIComponent(normQ), 900, () => novelSearch(q));
+    }
+    if (u.pathname === '/api/novel/toc') {
+      const src = findSource(u.searchParams.get('s') || '');
+      const target = src ? safeSourceUrl(src, u.searchParams.get('u') || '') : null;
+      if (!target) return new Response(JSON.stringify({ error: '参数错误' }), { status: 400, headers: { ...CORS, 'Content-Type': 'application/json; charset=utf-8' } });
+      return cachedJson('api/novel/toc?u=' + encodeURIComponent(target), 3600, async () => {
+        const r = await http(target, { decode: 'auto', timeoutMs: 20000 });
+        if (r.status !== 200) throw new Error('HTTP ' + r.status);
+        const chapters = parseToc(r.body, target).slice(0, 3000);
+        const title = strip((r.body.match(/<h1[^>]*>([\s\S]*?)<\/h1>/) || ['', ''])[1]) || strip((r.body.match(/<meta[^>]*property="og:title"[^>]*content="([^"]*)"/) || ['', ''])[1]);
+        return { total: chapters.length, title, chapters };
+      });
+    }
+    if (u.pathname === '/api/novel/chapter') {
+      const src = findSource(u.searchParams.get('s') || '');
+      const target = src ? safeSourceUrl(src, u.searchParams.get('u') || '') : null;
+      if (!target) return new Response(JSON.stringify({ error: '参数错误' }), { status: 400, headers: { ...CORS, 'Content-Type': 'application/json; charset=utf-8' } });
+      return cachedJson('api/novel/chapter?u=' + encodeURIComponent(target), 86400, async () => {
+        const r = await http(target, { decode: 'auto', timeoutMs: 20000 });
+        if (r.status !== 200) throw new Error('HTTP ' + r.status);
+        const t = strip((r.body.match(/<h1[^>]*>([\s\S]*?)<\/h1>/) || ['', ''])[1]);
+        const raw = (r.body.match(/id="content"[^>]*>([\s\S]*?)<\/div>/) || ['', ''])[1];
+        if (!raw) throw new Error('正文解析失败');
+        return { t, p: cleanChapter(raw, src.filters || []) };
+      });
     }
     if (u.pathname === '/') return new Response(MINI_UI, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
     return new Response('Not Found', { status: 404, headers: CORS });

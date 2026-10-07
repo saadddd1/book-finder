@@ -68,6 +68,15 @@ footer{font-size:12px;color:var(--muted);padding:24px 0 0;border-top:1px solid v
 .fb .lbl{margin-left:0}
 .chips{margin-bottom:4px}
 code{background:#eef;font-size:11px;padding:1px 5px;border-radius:4px}
+.tabs{display:flex;gap:8px;margin:12px 0 0}
+.tab{font-size:13px;padding:7px 20px;border-radius:10px;border:1px solid var(--border);background:#fff;cursor:pointer;color:var(--muted)}
+.tab.on{background:var(--pri);border-color:var(--pri);color:#fff}
+.nvbar{height:8px;background:#e5e7eb;border-radius:99px;overflow:hidden;margin:10px 0}
+.nvbar i{display:block;height:100%;background:var(--pri);width:0%;transition:width .2s}
+.nvrow input{width:100px;font-size:13px;padding:6px 10px;border:1px solid var(--border);border-radius:8px;outline:none}
+button.chip{font-size:12px;padding:6px 14px;border-radius:99px;border:1px solid var(--border);background:#fff;color:var(--text);cursor:pointer}
+button.chip.pri{background:var(--pri);border-color:var(--pri);color:#fff}
+button.chip:disabled{opacity:.5}
 .spin{display:inline-block;width:12px;height:12px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:sp 1s linear infinite;vertical-align:-2px;margin-right:6px}
 @keyframes sp{to{transform:rotate(360deg)}}
 @media(max-width:640px){.api-box input{width:150px}.searchrow{flex-wrap:wrap}#go{flex:1}}
@@ -82,6 +91,7 @@ code{background:#eef;font-size:11px;padding:1px 5px;border-radius:4px}
     <button id="saveApi">保存</button><span id="apiState"></span>
   </div>
 </header>
+<div class="tabs"><button class="tab on" id="tabBook">电子书</button><button class="tab" id="tabNovel">网文下载</button></div>
 <div class="banner" id="banner">首次使用：注册 Cloudflare 并部署 Worker 后，把 <b>workers.dev 地址</b>粘贴到右上角 API 框并保存。也可以填 <code>http://localhost:7788</code> 使用本地版（node aggregate.js）。</div>
 <div class="searchrow">
   <input id="q" placeholder="输入书名 / 作者，回车或点搜索" autofocus>
@@ -94,6 +104,17 @@ code{background:#eef;font-size:11px;padding:1px 5px;border-radius:4px}
 <div class="srcstatus" id="status"></div>
 <div class="hint" id="hint" style="display:none">结果已按相关度排序、跨源合并去重 · <b>EPUB / PDF / Kindle / TXT</b> 按钮为直接下载 · 「书页」进入站内下载页</div>
 <div id="out"><div class="empty">输入书名开始搜索。中文书、英文公版书、教材一次性并发查询 9 个源。</div></div>
+<div id="nvPanel" class="src" style="display:none">
+  <div class="src-head"><h2 id="nvTitle"></h2><span class="st" id="nvTotal"></span></div>
+  <div class="chips nvrow" style="margin:6px 0">
+    <span class="lbl">第</span><input id="nvFrom" type="number" min="1" value="1"><span class="lbl">至</span><input id="nvTo" type="number" min="1" value="1"><span class="lbl">章</span>
+    <button class="chip pri" id="nvTxt">下载 TXT</button>
+    <button class="chip pri" id="nvEpub">下载 EPUB</button>
+    <button class="chip" id="nvCancel" style="display:none">取消</button>
+  </div>
+  <div class="nvbar" id="nvProgWrap" style="display:none"><i id="nvProg"></i></div>
+  <div class="src-desc" id="nvStat"></div>
+</div>
 <details id="fallback" class="fb" style="display:none">
   <summary>没找到？一键去更多书源站搜同词 · 找书导航</summary>
   <div class="chips" id="fbSame"></div>
@@ -152,9 +173,24 @@ function renderRecent(){
 renderRecent();
 
 // ---- 搜索 ----
+var mode='book';
+$('tabBook').onclick=function(){setMode('book')};
+$('tabNovel').onclick=function(){setMode('novel')};
+function setMode(m){
+  mode=m;
+  $('tabBook').classList.toggle('on',m==='book');
+  $('tabNovel').classList.toggle('on',m==='novel');
+  $('q').placeholder=m==='novel'?'输入网文书名，回车或点搜索':'输入书名 / 作者，回车或点搜索';
+  $('viewToggle').style.display=m==='book'?'':'none';
+  $('nvPanel').style.display='none';
+  $('out').innerHTML='<div class="empty">'+(m==='novel'
+    ?'网文模式：搜到书 → 选章节范围 → 浏览器内并发抓取 → 打包 TXT / EPUB 下载。'
+    :'输入书名开始搜索。中文书、英文公版书、教材一次性并发查询 9 个源。')+'</div>';
+}
 async function run(q){
   q=(q||'').trim();if(!q)return;
   if(!apiBase){$('api').focus();return}
+  if(mode==='novel')return novelRun(q);
   curQ=q;pushRecent(q);renderFallback(q);
   var go=$('go');
   go.disabled=true;go.innerHTML='<span class="spin"></span>搜索中';
@@ -383,6 +419,166 @@ function renderFallback(q){
     c.onclick=function(){window.open(p[1],'_blank','noopener')};
     nav.appendChild(c);
   });
+}
+// ---- 网文模式: 搜索/目录/并发抓章/客户端打包 ----
+var novSrc=null, novToc=null, novBook=null, novAbort=null;
+function novelRun(q){
+  curQ=q;pushRecent(q);renderFallback(null);
+  $('nvPanel').style.display='none';
+  $('hint').style.display='none';$('langFilters').style.display=$('fmtFilters').style.display='none';$('status').innerHTML='';
+  var go=$('go');go.disabled=true;go.innerHTML='<span class="spin"></span>搜索中';
+  $('out').innerHTML='<div class="empty">正在搜索网文源…</div>';
+  fetch(apiBase+'/api/novel/search?q='+encodeURIComponent(q)).then(function(x){return x.json()}).then(function(d){
+    $('out').innerHTML='';
+    var any=false;
+    (d.sources||[]).forEach(function(s){
+      var sec=document.createElement('div');sec.className='src';
+      sec.innerHTML='<div class="src-head"><h2>'+esc(s.name)+'</h2>'+
+        (s.ok?'<span class="st ok">'+s.items.length+' 条</span>':'<span class="st fail">失败 · '+esc((s.error||'').slice(0,40))+'</span>')+'</div>';
+      if(s.ok&&!s.items.length)sec.insertAdjacentHTML('beforeend','<div class="empty">无结果</div>');
+      (s.items||[]).forEach(function(it){
+        any=true;
+        var el=document.createElement('div');el.className='item';
+        el.innerHTML='<div class="t"><b>'+esc(it.title)+'</b><span class="sub">'+esc([it.author,it.latest,it.extra].filter(Boolean).join(' · '))+'</span><div class="tags"><span class="tag">'+esc(s.name)+'</span></div></div>';
+        var btn=document.createElement('a');btn.className='btn pri';btn.href='javascript:void(0)';btn.textContent='选章下载';
+        btn.onclick=function(){openToc(s.id,it)};
+        el.appendChild(btn);
+        sec.appendChild(el);
+      });
+      $('out').appendChild(sec);
+    });
+    if(!any)$('out').innerHTML='<div class="empty">没搜到，换个词试试</div>';
+  }).catch(function(e){$('out').innerHTML='<div class="empty err">请求失败：'+esc(e.message)+'</div>'}).finally(function(){go.disabled=false;go.textContent='搜索'});
+}
+async function openToc(srcId,it){
+  novSrc={id:srcId};novBook=it;
+  $('nvPanel').style.display='block';
+  $('nvTitle').textContent=it.title;
+  $('nvTotal').textContent='加载目录…';
+  $('nvStat').textContent='';$('nvProgWrap').style.display='none';
+  try{
+    var d=await fetch(apiBase+'/api/novel/toc?u='+encodeURIComponent(it.tocUrl)+'&s='+srcId).then(function(x){return x.json()});
+    if(d.error)throw new Error(d.error);
+    novToc=d.chapters||[];
+    if(!novToc.length)throw new Error('目录为空');
+    $('nvTotal').textContent=novToc.length+' 章';
+    $('nvFrom').value=1;$('nvFrom').max=novToc.length;
+    $('nvTo').value=Math.min(novToc.length,50);$('nvTo').max=novToc.length;
+    $('nvPanel').scrollIntoView({behavior:'smooth',block:'center'});
+  }catch(e){$('nvTotal').textContent='目录加载失败 · '+esc(e.message)}
+}
+function nvRange(){
+  var a=Math.max(1,+$('nvFrom').value||1),b=Math.min(novToc.length,+$('nvTo').value||novToc.length);
+  if(a>b){var t=a;a=b;b=t}
+  return novToc.slice(a-1,b);
+}
+async function grab(onProg){
+  var list=nvRange();
+  novAbort=new AbortController();
+  $('nvCancel').style.display='inline-flex';$('nvProgWrap').style.display='block';$('nvProg').style.width='0%';
+  $('nvTxt').disabled=$('nvEpub').disabled=true;
+  var out=new Array(list.length),done=0,idx=0,fails=0;
+  async function worker(){
+    while(idx<list.length&&!novAbort.signal.aborted){
+      var i=idx++,ch=list[i];
+      for(var att=0;att<2;att++){
+        try{
+          var r=await fetch(apiBase+'/api/novel/chapter?u='+encodeURIComponent(ch.u)+'&s='+novSrc.id,{signal:novAbort.signal});
+          if(!r.ok)throw new Error('HTTP '+r.status);
+          var d=await r.json();
+          out[i]={t:d.t||ch.t,p:d.p||[]};break;
+        }catch(e){
+          if(novAbort.signal.aborted)return;
+          if(att===1){fails++;out[i]={t:ch.t,p:['[本章抓取失败]']}}
+          else await new Promise(function(rs){setTimeout(rs,800)});
+        }
+      }
+      onProg(++done,list.length,fails);
+    }
+  }
+  await Promise.all([worker(),worker(),worker()]);
+  $('nvCancel').style.display='none';$('nvTxt').disabled=$('nvEpub').disabled=false;
+  var ab=novAbort;novAbort=null;
+  return ab.signal.aborted?null:out;
+}
+$('nvCancel').onclick=function(){if(novAbort)novAbort.abort();$('nvStat').textContent='已取消'};
+$('nvTxt').onclick=async function(){
+  if(!novToc)return;
+  var btn=this;btn.disabled=true;
+  var out=await grab(function(d,n,f){$('nvProg').style.width=(d/n*100).toFixed(1)+'%';$('nvStat').textContent='已抓 '+d+'/'+n+' 章'+(f?' · 失败 '+f:'')});
+  if(out){
+    var parts=[novBook.title+'　作者：'+(novBook.author||'未知')+'　来源：找书聚合·网文模式',''];
+    out.forEach(function(c){parts.push(c.t,'',c.p.join('\n\n'),'')});
+    saveBlob(new Blob([parts.join('\n')],{type:'text/plain;charset=utf-8'}),safeName(novBook.title)+'.txt');
+    $('nvStat').textContent='TXT 已生成';$('nvProgWrap').style.display='none';
+  }
+  btn.disabled=false;
+};
+$('nvEpub').onclick=async function(){
+  if(!novToc)return;
+  var btn=this;btn.disabled=true;
+  var out=await grab(function(d,n,f){$('nvProg').style.width=(d/n*100).toFixed(1)+'%';$('nvStat').textContent='已抓 '+d+'/'+n+' 章'+(f?' · 失败 '+f:'')});
+  if(out){
+    $('nvStat').textContent='打包 EPUB 中…';
+    var blob=await buildEpub(novBook.title,novBook.author||'未知',out);
+    saveBlob(blob,safeName(novBook.title)+'.epub');
+    $('nvStat').textContent='EPUB 已生成';$('nvProgWrap').style.display='none';
+  }
+  btn.disabled=false;
+};
+function safeName(s){return (s||'book').replace(/[\\\/:*?"<>|]/g,'_').slice(0,60)}
+function saveBlob(blob,name){var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(function(){URL.revokeObjectURL(a.href);a.remove()},2000)}
+function xmlEsc(s){return String(s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]})}
+// ---- 客户端 EPUB: 最小 ZIP writer (deflate-raw via CompressionStream) ----
+var CRC_T=(function(){var t=new Int32Array(256);for(var n=0;n<256;n++){var c=n;for(var k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c}return t})();
+function crc32(d){var c=-1;for(var i=0;i<d.length;i++)c=CRC_T[(c^d[i])&0xff]^(c>>>8);return(c^-1)>>>0}
+async function defl(u8){if(typeof CompressionStream==='undefined')return null;try{var cs=new CompressionStream('deflate-raw');var ab=await new Response(new Blob([u8]).stream().pipeThrough(cs)).arrayBuffer();return new Uint8Array(ab)}catch(e){return null}}
+async function makeZip(files){
+  var enc=new TextEncoder(),parts=[],central=[],off=0;
+  for(var fi=0;fi<files.length;fi++){
+    var f=files[fi];
+    var raw=typeof f.data==='string'?enc.encode(f.data):f.data;
+    var data=raw,method=0;
+    if(!f.store){var z=await defl(raw);if(z&&z.length<raw.length){data=z;method=8}}
+    var nb=enc.encode(f.name),crc=crc32(raw);
+    var h=new DataView(new ArrayBuffer(30));
+    h.setUint32(0,0x04034b50,true);h.setUint16(4,20,true);h.setUint16(8,method,true);
+    h.setUint32(14,crc,true);h.setUint32(18,data.length,true);h.setUint32(22,raw.length,true);
+    h.setUint16(26,nb.length,true);
+    parts.push(new Uint8Array(h.buffer),nb,data);
+    central.push({nb:nb,crc:crc,m:method,c:data.length,r:raw.length,o:off});
+    off+=30+nb.length+data.length;
+  }
+  var cdOff=off,cdLen=0;
+  for(var ci=0;ci<central.length;ci++){
+    var cc=central[ci],ch=new DataView(new ArrayBuffer(46));
+    ch.setUint32(0,0x02014b50,true);ch.setUint16(4,20,true);ch.setUint16(6,20,true);ch.setUint16(10,cc.m,true);
+    ch.setUint32(16,cc.crc,true);ch.setUint32(20,cc.c,true);ch.setUint32(24,cc.r,true);ch.setUint16(28,cc.nb.length,true);
+    ch.setUint32(42,cc.o,true);
+    parts.push(new Uint8Array(ch.buffer),cc.nb);cdLen+=46+cc.nb.length;
+  }
+  var e=new DataView(new ArrayBuffer(22));
+  e.setUint32(0,0x06054b50,true);e.setUint16(8,central.length,true);e.setUint16(10,central.length,true);
+  e.setUint32(12,cdLen,true);e.setUint32(16,cdOff,true);
+  parts.push(new Uint8Array(e.buffer));
+  return new Blob(parts,{type:'application/epub+zip'});
+}
+async function buildEpub(title,author,chaps){
+  var files=[{name:'mimetype',data:'application/epub+zip',store:true}];
+  files.push({name:'META-INF/container.xml',data:'<?xml version="1.0" encoding="UTF-8"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>'});
+  var man='',spine='',nav='<nav epub:type="toc" xmlns:epub="http://www.idpf.org/2007/ops"><h1>目录</h1><ol>';
+  chaps.forEach(function(c,i){
+    var id='c'+(i+1);
+    man+='<item id="'+id+'" href="'+id+'.xhtml" media-type="application/xhtml+xml"/>';
+    spine+='<itemref idref="'+id+'"/>';
+    nav+='<li><a href="'+id+'.xhtml">'+xmlEsc(c.t)+'</a></li>';
+    files.push({name:'OEBPS/'+id+'.xhtml',data:'<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml"><head><title>'+xmlEsc(c.t)+'</title><link rel="stylesheet" type="text/css" href="style.css"/></head><body><h2>'+xmlEsc(c.t)+'</h2>'+c.p.map(function(p){return '<p>'+xmlEsc(p)+'</p>'}).join('')+'</body></html>'});
+  });
+  nav+='</ol></nav>';
+  files.push({name:'OEBPS/style.css',data:'body{font-family:serif;line-height:1.7;margin:1em}h2{font-size:1.2em;margin:1em 0}p{text-indent:2em;margin:.4em 0}'});
+  files.push({name:'OEBPS/nav.xhtml',data:'<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>目录</title></head><body>'+nav+'</body></html>'});
+  files.push({name:'OEBPS/content.opf',data:'<?xml version="1.0" encoding="UTF-8"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bid"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="bid">urn:uuid:'+(crypto.randomUUID?crypto.randomUUID():String(Date.now()))+'</dc:identifier><dc:title>'+xmlEsc(title)+'</dc:title><dc:creator>'+xmlEsc(author)+'</dc:creator><dc:language>zh-CN</dc:language><meta property="dcterms:modified">'+new Date().toISOString().replace(/\.\d+Z$/,'Z')+'</meta></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="css" href="style.css" media-type="text/css"/>'+man+'</manifest><spine>'+spine+'</spine></package>'});
+  return makeZip(files);
 }
 renderFallback(null);
 
