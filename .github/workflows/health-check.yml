@@ -4,7 +4,7 @@ name: book-source-health-check
 on:
   push:
     branches: [main]
-    paths: ['worker.js', '.github/workflows/health-check.yml']
+    paths: ['src/**', '.github/workflows/health-check.yml']
   schedule:
     - cron: '0 22 * * *'
   workflow_dispatch:
