@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>找书聚合 · 搜一次，拿直链</title>
+<meta name="theme-color" content="#4f46e5">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
 <style>
 :root{--bg:#f5f6f8;--card:#fff;--text:#1a1d21;--muted:#6b7280;--border:#e5e7eb;--pri:#4f46e5;--pri-soft:rgba(79,70,229,.12)}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -55,6 +59,11 @@ a.btn:hover{opacity:.85}
 .err{font-size:12px;color:#991b1b}
 .empty{font-size:13px;color:var(--muted);padding:30px 0;text-align:center}
 footer{font-size:12px;color:var(--muted);padding:24px 0 0;border-top:1px solid var(--border);margin-top:20px}
+.fb{margin:16px 0 0}
+.fb summary{cursor:pointer;font-size:13px;color:var(--muted);user-select:none}
+.fb summary:hover{color:var(--pri)}
+.fb .lbl{margin-left:0}
+.chips{margin-bottom:4px}
 code{background:#eef;font-size:11px;padding:1px 5px;border-radius:4px}
 .spin{display:inline-block;width:12px;height:12px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:sp 1s linear infinite;vertical-align:-2px;margin-right:6px}
 @keyframes sp{to{transform:rotate(360deg)}}
@@ -64,7 +73,7 @@ code{background:#eef;font-size:11px;padding:1px 5px;border-radius:4px}
 <body>
 <div class="wrap">
 <header>
-  <h1>找书聚合<small>搜一次 · 六源并发 · 直链下载</small></h1>
+  <h1>找书聚合<small>搜一次 · 九源并发 · 直链下载</small></h1>
   <div class="api-box">
     API <input id="api" placeholder="https://你的worker.workers.dev">
     <button id="saveApi">保存</button><span id="apiState"></span>
@@ -81,8 +90,13 @@ code{background:#eef;font-size:11px;padding:1px 5px;border-radius:4px}
 <div class="chips" id="fmtFilters" style="display:none"><span class="lbl">格式</span></div>
 <div class="srcstatus" id="status"></div>
 <div class="hint" id="hint" style="display:none">结果已跨源合并去重 · <b>EPUB / PDF / Kindle / TXT</b> 按钮为直接下载 · 「书页」进入站内下载页</div>
-<div id="out"><div class="empty">输入书名开始搜索。中文书、英文公版书、教材一次性并发查询 6 个源。</div></div>
-<footer>已接入：安娜的档案 · 苦瓜书盘 · Sobooks · Gutenberg · Standard Ebooks · Open Library。资源仅供个人学习消遣，读完觉得好请支持正版。</footer>
+<div id="out"><div class="empty">输入书名开始搜索。中文书、英文公版书、教材一次性并发查询 9 个源。</div></div>
+<details id="fallback" class="fb" style="display:none">
+  <summary>没找到？一键去更多书源站搜同词 · 找书导航</summary>
+  <div class="chips" id="fbSame"></div>
+  <div class="chips" id="fbNav"></div>
+</details>
+<footer>已接入：安娜的档案 · 苦瓜书盘 · Sobooks · 维基文库 · Gutenberg · Standard Ebooks · Open Library · Internet Archive · Google Books。资源仅供个人学习消遣，读完觉得好请支持正版。</footer>
 </div>
 <script>
 (function(){
@@ -138,10 +152,10 @@ renderRecent();
 async function run(q){
   q=(q||'').trim();if(!q)return;
   if(!apiBase){$('api').focus();return}
-  curQ=q;pushRecent(q);
+  curQ=q;pushRecent(q);renderFallback(q);
   var go=$('go');
   go.disabled=true;go.innerHTML='<span class="spin"></span>搜索中';
-  $('out').innerHTML='<div class="empty">正在并发查询 6 个源，约需 3~15 秒…</div>';
+  $('out').innerHTML='<div class="empty">正在并发查询 9 个源，约需 3~15 秒…</div>';
   // 会话内缓存: 同词秒开, 后台仍刷新
   var cached=sessionStorage.getItem(SS_PRE+q);
   if(cached){try{lastData=JSON.parse(cached);renderAll();}catch(e){}}
@@ -316,7 +330,54 @@ function renderFilters(){
     fe.appendChild(chip('fmt',p[0],p[1]));
   });
 }
+
+// ---- 跳转兜底: 同词搜索(已验证 URL 模式) + 找书导航 ----
+var FB_SAME=[
+  ['安娜的档案','https://zh.annas-archive.gl/search?q='],
+  ['Z-Library','https://z-library.sk/s/'],
+  ['Library Genesis','https://libgen.is/search.php?req='],
+  ['PDF Drive','https://www.pdfdrive.com/search?q='],
+  ['Internet Archive','https://archive.org/search?query='],
+  ['Open Library','https://openlibrary.org/search?q='],
+  ['Google Books','https://www.google.com/search?tbm=bks&q='],
+  ['Gutenberg','https://www.gutenberg.org/ebooks/search/?query='],
+  ['Standard Ebooks','https://standardebooks.org/ebooks?query='],
+  ['雅书','https://yabook.blog/?s='],
+  ['书格(古籍)','https://shuge.org/?s=']
+];
+var FB_NAV=[
+  ['熊猫搜书','https://xmsoushu.com'],
+  ['虫部落·电子书','https://giffox.com'],
+  ['24h搜书','https://24hbook.daohangxie.com'],
+  ['资源帝电子书导航','https://shu.ziyuandi.cn'],
+  ['微信读书(正版)','https://weread.qq.com'],
+  ['国家哲社文献中心','https://www.ncpssd.cn']
+];
+function renderFallback(q){
+  var box=$('fallback');if(!q){box.style.display='none';return}
+  box.style.display='block';
+  var same=$('fbSame');same.innerHTML='<span class="lbl">同词搜索</span>';
+  FB_SAME.forEach(function(p){
+    var c=document.createElement('span');c.className='chip';
+    c.textContent=p[0];
+    c.onclick=function(){window.open(p[1]+encodeURIComponent(q),'_blank','noopener')};
+    same.appendChild(c);
+  });
+  var nav=$('fbNav');nav.innerHTML='<span class="lbl">找书导航</span>';
+  FB_NAV.forEach(function(p){
+    var c=document.createElement('span');c.className='chip';
+    c.textContent=p[0];
+    c.onclick=function(){window.open(p[1],'_blank','noopener')};
+    nav.appendChild(c);
+  });
+}
+renderFallback(null);
+
 })();
+// ---- PWA ----
+if('serviceWorker' in navigator&&location.protocol==='https:'){
+  navigator.serviceWorker.register('./sw.js').catch(function(){});
+}
 </script>
 </body>
 </html>

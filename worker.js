@@ -31,8 +31,33 @@ async function http(url, opts = {}) {
 const strip = s => s.replace(/<[^>]+>/g, '').replace(/&[a-z#0-9]+;/gi, ' ').replace(/\s+/g, ' ').trim();
 
 // ---------- 适配器 ----------
-// 1. Gutenberg: 英文公版, 搜索页直接解析出直链
-async function gutenberg(q) {
+// 1. Gutendex: Gutenberg 官方 JSON API, 失败时降级为搜索页爬虫
+async function gutendex(q) {
+  try {
+    const r = await http('https://gutendex.com/books?search=' + encodeURIComponent(q), { timeoutMs: 15000 });
+    const data = JSON.parse(r.body);
+    const items = (data.results || []).slice(0, 10).map(b => {
+      const f = b.formats || {};
+      const dls = [];
+      if (f['application/epub+zip']) dls.push({ label: 'EPUB', url: f['application/epub+zip'] });
+      if (f['application/x-mobipocket-kindle']) dls.push({ label: 'Kindle', url: f['application/x-mobipocket-kindle'] });
+      const txtKey = Object.keys(f).find(k => k.startsWith('text/plain'));
+      if (txtKey) dls.push({ label: 'TXT', url: f[txtKey] });
+      return {
+        title: b.title, author: (b.authors || []).map(a => a.name).join(', '),
+        extra: (b.download_count || 0) + ' 次下载', downloads: dls,
+        pageUrl: `https://www.gutenberg.org/ebooks/${b.id}`,
+      };
+    });
+    if (items.length) return { items };
+    throw new Error('gutendex 无结果');
+  } catch (e) {
+    return gutenbergScrape(q);
+  }
+}
+
+// 1b. Gutenberg 爬虫降级: 搜索页直接解析出直链
+async function gutenbergScrape(q) {
   const r = await http('https://www.gutenberg.org/ebooks/search/?query=' + encodeURIComponent(q));
   const items = [];
   const re = /href="\/ebooks\/(\d+)"[\s\S]*?class="title">([^<]*)<\/span>[\s\S]*?class="subtitle">([^<]*)<\/span>[\s\S]*?class="extra">([\d,]+) downloads/g;
@@ -154,13 +179,73 @@ async function openlibrary(q) {
   return { items };
 }
 
+// 7. Google Books: 元数据大盘, 公版书给 EPUB/PDF 直链
+async function gbooks(q) {
+  const r = await http('https://www.googleapis.com/books/v1/volumes?maxResults=10&printType=books&country=US&q=' + encodeURIComponent(q), { timeoutMs: 15000 });
+  if (r.status !== 200) throw new Error('HTTP ' + r.status);
+  const data = JSON.parse(r.body);
+  const items = (data.items || []).map(it => {
+    const v = it.volumeInfo || {}, a = it.accessInfo || {};
+    const dls = [];
+    if (a.epub && a.epub.isAvailable) dls.push({ label: 'EPUB', url: a.epub.downloadLink || a.webReaderLink });
+    if (a.pdf && a.pdf.isAvailable) dls.push({ label: 'PDF', url: a.pdf.downloadLink || a.webReaderLink });
+    return {
+      title: v.title || '(无标题)', author: (v.authors || []).join(', '),
+      extra: [v.publishedDate ? String(v.publishedDate).slice(0, 4) : '', 'Google Books'].filter(Boolean).join(' · '),
+      downloads: dls, pageUrl: v.infoLink || a.webReaderLink || '',
+    };
+  });
+  return { items };
+}
+
+// 8. Internet Archive: 海量公版扫描书, advancedsearch JSON API
+async function archiveorg(q) {
+  const query = `(${q}) AND mediatype:texts`;
+  const r = await http('https://archive.org/advancedsearch.php?q=' + encodeURIComponent(query) + '&fl%5B%5D=identifier&fl%5B%5D=title&fl%5B%5D=creator&fl%5B%5D=year&rows=8&page=1&output=json', { timeoutMs: 20000 });
+  if (r.status !== 200) throw new Error('HTTP ' + r.status);
+  const data = JSON.parse(r.body);
+  const docs = ((data.response || {}).docs) || [];
+  const items = docs.map(d => ({
+    title: d.title || d.identifier, author: Array.isArray(d.creator) ? d.creator.join(', ') : (d.creator || ''),
+    extra: [d.year ? String(d.year) : '', '公版扫描'].filter(Boolean).join(' · '),
+    downloads: [{ label: 'PDF', url: `https://archive.org/download/${d.identifier}/${d.identifier}.pdf` }],
+    pageUrl: 'https://archive.org/details/' + d.identifier,
+  }));
+  return { items };
+}
+
+// 9. 维基文库: 中文公版/古籍全文, MediaWiki API + ws-export 生成 EPUB/PDF
+async function wikisource(q) {
+  const r = await http('https://zh.wikisource.org/w/api.php?action=query&list=search&srlimit=8&format=json&srsearch=' + encodeURIComponent(q), { timeoutMs: 15000 });
+  if (r.status !== 200) throw new Error('HTTP ' + r.status);
+  const data = JSON.parse(r.body);
+  const hits = ((data.query || {}).search) || [];
+  const items = hits.map(h => {
+    const t = h.title.replace(/ /g, '_');
+    const ex = 'https://ws-export.wmcloud.org/?lang=zh&title=' + encodeURIComponent(t);
+    return {
+      title: h.title, author: '',
+      extra: '维基文库 · ' + strip(h.snippet || '').slice(0, 40),
+      downloads: [
+        { label: 'EPUB', url: ex + '&format=epub' },
+        { label: 'PDF', url: ex + '&format=pdf' },
+      ],
+      pageUrl: 'https://zh.wikisource.org/wiki/' + encodeURIComponent(t),
+    };
+  });
+  return { items };
+}
+
 const ADAPTERS = [
   { name: '安娜的档案', desc: '全语言·中文最强·聚合Z-Lib等大库（常有人机验证，自动给浏览器入口）', lang: 'zh', search: annas },
   { name: '苦瓜书盘', desc: '中文·人文社科小说·EPUB/MOBI', lang: 'zh', search: kgbook },
   { name: 'Sobooks', desc: '中文·Kindle精选', lang: 'zh', search: sobooks },
-  { name: 'Gutenberg', desc: '英文公版·EPUB/Kindle/TXT直链', lang: 'en', search: gutenberg },
+  { name: '维基文库', desc: '中文公版古籍·在线读/导出EPUB', lang: 'zh', search: wikisource },
+  { name: 'Gutenberg', desc: '英文公版·EPUB/Kindle/TXT直链', lang: 'en', search: gutendex },
   { name: 'Standard Ebooks', desc: '英文精校公版·EPUB/AZW3直链', lang: 'en', search: standardebooks },
   { name: 'Open Library', desc: '英文书目·公版可下', lang: 'en', search: openlibrary },
+  { name: 'Internet Archive', desc: '公版扫描书·海量·PDF直链', lang: 'en', search: archiveorg },
+  { name: 'Google Books', desc: '英文大盘·公版EPUB/PDF直链', lang: 'en', search: gbooks },
 ];
 
 async function handleSearch(q) {
@@ -211,7 +296,7 @@ function esc(s){return (s||'').replace(/[&<>"]/g,function(c){return{'&':'&amp;',
 async function run(){
   var q=qEl.value.trim();if(!q)return;
   go.disabled=true;go.textContent='搜索中…';
-  out.innerHTML='<p>正在并发查询 6 个源…</p>';
+  out.innerHTML='<p>正在并发查询 9 个源，约需 3~15 秒…</p>';
   try{
     var d=await fetch('/api/search?q='+encodeURIComponent(q)).then(function(x){return x.json()});
     out.innerHTML='';
