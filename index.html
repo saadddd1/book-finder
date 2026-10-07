@@ -334,6 +334,8 @@ function renderFilters(){
   var le=$('langFilters'),fe=$('fmtFilters');
   if(!lastData){le.style.display=fe.style.display='none';return}
   le.style.display=fe.style.display='flex';
+  le.innerHTML='<span class="lbl">语言</span>';   // 清掉旧 chips 防止叠加
+  fe.innerHTML='<span class="lbl">格式</span>';
   [['all','全部'],['zh','中文'],['en','英文']].forEach(function(p){
     le.appendChild(chip('lang',p[0],p[1]));
   });
