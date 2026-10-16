@@ -4,7 +4,7 @@ name: book-source-health-check
 on:
   push:
     branches: [main]
-    paths: ['src/**', '.github/workflows/health-check.yml']
+    paths: ['src/**', 'scripts/**', '.github/workflows/health-check.yml']
   schedule:
     - cron: '0 22 * * *'
   workflow_dispatch:
@@ -35,17 +35,6 @@ jobs:
               if (withHits < 2) { console.log("TOO FEW SOURCES RETURNED RESULTS"); process.exit(1); }
             ' || FAIL=1
           done
-          echo "===== novel search smoke: 斗破苍穹 (non-blocking) ====="
-          if ! curl -sS --max-time 60 -G "https://book-finder-api.3280244146.workers.dev/api/novel/search" \
-            --data-urlencode "q=斗破苍穹" -o resp.json; then
-            echo "::warning::novel search endpoint unreachable; continuing without blocking the build"
-          else
-            node -e '
-            const d = require("./resp.json");
-            const ok = (d.sources || []).filter(s => s.ok && s.items.length > 0);
-            (d.sources || []).forEach(s => console.log((s.ok ? "PASS" : "FAIL"), s.name, (s.items || []).length + "条", s.error || ""));
-            console.log("novel sources with hits:", ok.length + "/" + (d.sources || []).length);
-            if (ok.length < 1) console.log("::warning::NO NOVEL SOURCE RETURNED RESULTS; novel search is degraded but the overall health check remains non-blocking");
-            ' || echo "::warning::novel search response could not be parsed; continuing without blocking the build"
-          fi
+          echo "===== novel source availability (non-blocking) ====="
+          node scripts/check-novel-sources.mjs
           exit $FAIL
