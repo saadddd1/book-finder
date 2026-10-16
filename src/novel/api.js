@@ -14,7 +14,8 @@ export function safeSourceUrl(src, u) {
 export async function novelSearch(q) {
   const sources = await Promise.all(NOVEL_SOURCES.map(async s => {
     try {
-      const r = await http(s.search.url, {
+      const searchUrl = typeof s.search.url === 'function' ? s.search.url(q) : s.search.url;
+      const r = await http(searchUrl, {
         method: s.search.method || 'GET',
         body: s.search.body ? s.search.body(q) : undefined,
         decode: 'auto', timeoutMs: 15000,

@@ -152,8 +152,15 @@ async function openlibrary(q) {
 }
 
 // 7. Google Books: 元数据大盘, 公版书给 EPUB/PDF 直链
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function gbooks(q) {
-  const r = await http('https://www.googleapis.com/books/v1/volumes?maxResults=10&printType=books&country=US&q=' + encodeURIComponent(q), { timeoutMs: 15000 });
+  const url = 'https://www.googleapis.com/books/v1/volumes?maxResults=10&printType=books&country=US&q=' + encodeURIComponent(q);
+  let r;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    r = await http(url, { timeoutMs: 15000 });
+    if (r.status !== 429 && r.status < 500) break;
+    if (attempt < 3) await sleep(500 * (2 ** attempt));
+  }
   if (r.status !== 200) throw new Error('HTTP ' + r.status);
   const data = JSON.parse(r.body);
   const items = (data.items || []).map(it => {

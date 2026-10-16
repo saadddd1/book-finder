@@ -1,4 +1,4 @@
-// 网文书源规则 (v1): 笔尖中文 / 梦书中文
+// 网文书源规则 (v2): 酷我小说 API + 笔尖中文 / 梦书中文降级源
 // 结构探测于 2026-10-08, 参考社区项目 so-novel 的书源配置
 // parse 函数约定: (html, base) => [{title, tocUrl, author, latest, extra}]
 
@@ -7,6 +7,26 @@ function txt(s) {
 }
 
 export const NOVEL_SOURCES = [
+  {
+    id: 'kuwo',
+    name: '酷我小说',
+    base: 'https://appi.kuwo.cn/',
+    search: {
+      url: q => 'https://appi.kuwo.cn/novels/api/book/search?keyword=' + encodeURIComponent(q) + '&pi=1&ps=30',
+      method: 'GET',
+      body: q => null,
+      parse(body) {
+        const data = JSON.parse(body);
+        return (data.data || []).slice(0, 20).map(b => ({
+          title: b.title || '',
+          tocUrl: b.book_id ? 'https://appi.kuwo.cn/novels/api/book/' + encodeURIComponent(b.book_id) : '',
+          author: b.author_name || '',
+          latest: '',
+          extra: [b.category_name, b.status === 50 ? '完结' : b.status === 30 ? '连载' : ''].filter(Boolean).join(' · '),
+        })).filter(b => b.title && b.tocUrl);
+      },
+    },
+  },
   {
     id: 'bijian',
     name: '笔尖中文',
